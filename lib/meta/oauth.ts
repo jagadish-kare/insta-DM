@@ -86,7 +86,7 @@ export async function exchangeCodeForToken(
   code: string,
   redirectUri: string
 ): Promise<{ accessToken: string; userId: string }> {
-  const body = new URLSearchParams({
+  const params = new URLSearchParams({
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     client_secret: requireEnv("INSTAGRAM_APP_SECRET"),
     grant_type: "authorization_code",
@@ -94,23 +94,21 @@ export async function exchangeCodeForToken(
     code,
   });
 
-  const response = await fetch(INSTAGRAM_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString(),
+  const response = await fetch(`${INSTAGRAM_TOKEN_URL}?${params.toString()}`, {
+    method: "GET",
   });
 
   if (!response.ok) {
     const error = await response.json();
     throw new Error(
-      `Token exchange failed: ${error.error_message || JSON.stringify(error)}`
+      `Token exchange failed: ${error.error?.message || error.error_message || JSON.stringify(error)}`
     );
   }
 
   const data = await response.json();
   return {
     accessToken: data.access_token,
-    userId: String(data.user_id),
+    userId: String(data.user_id || data.id || ""),
   };
 }
 
