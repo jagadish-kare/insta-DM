@@ -5,10 +5,11 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "crypto";
-import { getEncryptionKeyHex, requireEnv } from "@/lib/env";
+import { getEncryptionKeyHex, getMetaGraphApiVersion, requireEnv } from "@/lib/env";
 
-const INSTAGRAM_OAUTH_URL = "https://www.instagram.com/oauth/authorize";
-const INSTAGRAM_TOKEN_URL = "https://api.instagram.com/oauth/access_token";
+// Using Facebook Login OAuth to get Instagram Business access
+const FACEBOOK_OAUTH_URL = "https://www.facebook.com/v21.0/dialog/oauth";
+const FACEBOOK_TOKEN_URL = "https://graph.facebook.com/v21.0/oauth/access_token";
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
@@ -70,47 +71,89 @@ export function verifyOAuthState(state: string | null): OAuthStatePayload | null
 }
 
 export function getAuthorizationUrl(redirectUri: string, state: string): string {
+  // Facebook Login scopes for Instagram Business access
+  // These scopes allow managing Instagram Business accounts connected to Facebook Pages
+  const scopes = [
+    "instagram_basic",
+    "instagram_manage_messages", 
+    "instagram_manage_comments",
+    "instagram_content_publish",
+    "pages_show_list",
+    "pages_read_engagement",
+    "business_management",
+  ].join(",");
+
   const params = new URLSearchParams({
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     redirect_uri: redirectUri,
-    scope:
-      "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish",
+    scope: scopes,
     response_type: "code",
     state,
   });
 
-  return `${INSTAGRAM_OAUTH_URL}?${params.toString()}`;
+  return `${FACEBOOK_OAUTH_URL}?${params.toString()}`;
 }
 
 export async function exchangeCodeForToken(
   code: string,
   redirectUri: string
 ): Promise<{ accessToken: string; userId: string }> {
-  const body = new URLSearchParams({
-    client_id: requireEnv("INSTAGRAM_APP_ID"),
-    client_secret: requireEnv("INSTAGRAM_APP_SECRET"),
-    grant_type: "authorization_code",
-    redirect_uri: redirectUri,
-    code,
-  });
+  // Exchange code for Facebook access token
+  const tokenUrl = new URL(FACEBOOK_TOKEN_URL);
+  tokenUrl.searchParams.set("client_id", requireEnv("INSTAGRAM_APP_ID"));
+  tokenUrl.searchParams.set("client_secret", requireEnv("INSTAGRAM_APP_SECRET"));
+  tokenUrl.searchParams.set("redirect_uri", redirectUri);
+  tokenUrl.searchParams.set("code", code);
 
-  const response = await fetch(INSTAGRAM_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString(),
+  const response = await fetch(tokenUrl.toString(), {
+    method: "GET",
   });
 
   if (!response.ok) {
     const error = await response.json();
     throw new Error(
-      `Token exchange failed: ${error.error_message || JSON.stringify(error)}`
+      `Token exchange failed: ${error.error?.message || JSON.stringify(error)}`
     );
   }
 
   const data = await response.json();
+  const fbAccessToken = data.access_token;
+
+  // Get the Facebook user ID
+  const meResponse = await fetch(
+    `https://graph.facebook.com/v21.0/me?access_token=${fbAccessToken}`
+  );
+  const meData = await meResponse.json();
+  
+  // Get Facebook Pages connected to this user
+  const pagesResponse = await fetch(
+    `https://graph.facebook.com/v21.0/me/accounts?access_token=${fbAccessToken}`
+  );
+  const pagesData = await pagesResponse.json();
+  
+  if (!pagesData.data || pagesData.data.length === 0) {
+    throw new Error("No Facebook Pages found. Please connect your Instagram Business account to a Facebook Page first.");
+  }
+
+  // Get the first page's access token and find connected Instagram account
+  const page = pagesData.data[0];
+  const pageAccessToken = page.access_token;
+  
+  // Get Instagram Business Account connected to this Page
+  const igAccountResponse = await fetch(
+    `https://graph.facebook.com/v21.0/${page.id}?fields=instagram_business_account&access_token=${pageAccessToken}`
+  );
+  const igAccountData = await igAccountResponse.json();
+  
+  if (!igAccountData.instagram_business_account) {
+    throw new Error("No Instagram Business account connected to your Facebook Page. Please connect your Instagram Business/Creator account to your Facebook Page first.");
+  }
+
+  const instagramAccountId = igAccountData.instagram_business_account.id;
+
   return {
-    accessToken: data.access_token,
-    userId: String(data.user_id),
+    accessToken: pageAccessToken, // Use Page access token for Instagram API calls
+    userId: instagramAccountId,
   };
 }
 

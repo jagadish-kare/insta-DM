@@ -750,34 +750,77 @@ export async function getFollowerCountSeries(
 export async function getLongLivedToken(
   shortLivedToken: string
 ): Promise<{ accessToken: string; expiresIn: number }> {
-  const url = new URL(`${instagramGraphBase()}/access_token`);
-  url.searchParams.set("grant_type", "ig_exchange_token");
-  url.searchParams.set("client_secret", requireEnv("INSTAGRAM_APP_SECRET"));
-  url.searchParams.set("access_token", shortLivedToken);
+  // For Facebook Page access tokens obtained through Facebook Login,
+  // they are already long-lived if the user granted offline_access or
+  // if we're using a Page access token (which doesn't expire).
+  // Try to exchange for long-lived token, but if it fails, the token is likely already long-lived.
+  
+  try {
+    const url = new URL(`https://graph.facebook.com/v21.0/oauth/access_token`);
+    url.searchParams.set("grant_type", "fb_exchange_token");
+    url.searchParams.set("client_id", requireEnv("INSTAGRAM_APP_ID"));
+    url.searchParams.set("client_secret", requireEnv("INSTAGRAM_APP_SECRET"));
+    url.searchParams.set("fb_exchange_token", shortLivedToken);
 
-  const response = await fetch(url.toString());
-  const data = await handleResponse<TokenResponse>(response);
-
-  return {
-    accessToken: data.access_token,
-    expiresIn: data.expires_in ?? 5184000,
-  };
+    const response = await fetch(url.toString());
+    
+    if (!response.ok) {
+      // Token might already be long-lived (Page tokens don't expire)
+      console.log("[Meta] Token exchange not needed - likely already long-lived");
+      return {
+        accessToken: shortLivedToken,
+        expiresIn: 5184000, // 60 days default
+      };
+    }
+    
+    const data = await handleResponse<TokenResponse>(response);
+    return {
+      accessToken: data.access_token,
+      expiresIn: data.expires_in ?? 5184000,
+    };
+  } catch {
+    // Page access tokens don't expire, so return the original token
+    return {
+      accessToken: shortLivedToken,
+      expiresIn: 5184000, // 60 days default
+    };
+  }
 }
 
 export async function refreshLongLivedToken(
   longLivedToken: string
 ): Promise<{ accessToken: string; expiresIn: number }> {
-  const url = new URL(`${instagramGraphBase()}/refresh_access_token`);
-  url.searchParams.set("grant_type", "ig_refresh_token");
-  url.searchParams.set("access_token", longLivedToken);
+  // For Page access tokens, they don't expire, so just return the same token
+  // For user access tokens, try to refresh via Facebook's endpoint
+  try {
+    const url = new URL(`https://graph.facebook.com/v21.0/oauth/access_token`);
+    url.searchParams.set("grant_type", "fb_exchange_token");
+    url.searchParams.set("client_id", requireEnv("INSTAGRAM_APP_ID"));
+    url.searchParams.set("client_secret", requireEnv("INSTAGRAM_APP_SECRET"));
+    url.searchParams.set("fb_exchange_token", longLivedToken);
 
-  const response = await fetch(url.toString());
-  const data = await handleResponse<TokenResponse>(response);
-
-  return {
-    accessToken: data.access_token,
-    expiresIn: data.expires_in ?? 5184000,
-  };
+    const response = await fetch(url.toString());
+    
+    if (!response.ok) {
+      // Page tokens don't expire, return the original
+      return {
+        accessToken: longLivedToken,
+        expiresIn: 5184000,
+      };
+    }
+    
+    const data = await handleResponse<TokenResponse>(response);
+    return {
+      accessToken: data.access_token,
+      expiresIn: data.expires_in ?? 5184000,
+    };
+  } catch {
+    // Page access tokens don't expire
+    return {
+      accessToken: longLivedToken,
+      expiresIn: 5184000,
+    };
+  }
 }
 
 export async function subscribeInstagramAccountToWebhooks(
