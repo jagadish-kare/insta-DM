@@ -7,8 +7,8 @@ import {
 } from "crypto";
 import { getEncryptionKeyHex, requireEnv } from "@/lib/env";
 
-const INSTAGRAM_OAUTH_URL = "https://www.facebook.com/dialog/oauth";
-const INSTAGRAM_TOKEN_URL = "https://graph.facebook.com/v21.0/oauth/access_token";
+const INSTAGRAM_OAUTH_URL = "https://www.instagram.com/oauth/authorize";
+const INSTAGRAM_TOKEN_URL = "https://api.instagram.com/oauth/access_token";
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
@@ -74,7 +74,7 @@ export function getAuthorizationUrl(redirectUri: string, state: string): string 
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     redirect_uri: redirectUri,
     scope:
-      "instagram_basic,instagram_content_publish,instagram_manage_comments,instagram_manage_messages",
+      "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish",
     response_type: "code",
     state,
   });
@@ -86,7 +86,7 @@ export async function exchangeCodeForToken(
   code: string,
   redirectUri: string
 ): Promise<{ accessToken: string; userId: string }> {
-  const params = new URLSearchParams({
+  const body = new URLSearchParams({
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     client_secret: requireEnv("INSTAGRAM_APP_SECRET"),
     grant_type: "authorization_code",
@@ -94,21 +94,23 @@ export async function exchangeCodeForToken(
     code,
   });
 
-  const response = await fetch(`${INSTAGRAM_TOKEN_URL}?${params.toString()}`, {
-    method: "GET",
+  const response = await fetch(INSTAGRAM_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
   });
 
   if (!response.ok) {
     const error = await response.json();
     throw new Error(
-      `Token exchange failed: ${error.error?.message || error.error_message || JSON.stringify(error)}`
+      `Token exchange failed: ${error.error_message || JSON.stringify(error)}`
     );
   }
 
   const data = await response.json();
   return {
     accessToken: data.access_token,
-    userId: String(data.user_id || data.id || ""),
+    userId: String(data.user_id),
   };
 }
 
