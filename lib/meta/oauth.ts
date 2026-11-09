@@ -74,7 +74,7 @@ export function getAuthorizationUrl(redirectUri: string, state: string): string 
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     redirect_uri: redirectUri,
     scope:
-      "instagram_basic,instagram_manage_messages,instagram_manage_comments,pages_show_list,pages_read_engagement,business_management",
+      "instagram_basic,instagram_content_publish,instagram_manage_comments,instagram_manage_messages",
     response_type: "code",
     state,
   });
