@@ -576,15 +576,36 @@ export async function getConversationMessages(
 }
 
 export async function getUserInfo(accessToken: string): Promise<InstagramUser> {
-  const url = new URL(`${instagramGraphBase()}/me`);
-  url.searchParams.set(
+  // First try Instagram Graph API
+  const igUrl = new URL(`${instagramGraphBase()}/me`);
+  igUrl.searchParams.set(
     "fields",
     "id,user_id,username,name,profile_picture_url,followers_count"
   );
-  url.searchParams.set("access_token", accessToken);
+  igUrl.searchParams.set("access_token", accessToken);
 
-  const response = await fetch(url.toString());
-  return handleResponse<InstagramUser>(response);
+  try {
+    const response = await fetch(igUrl.toString());
+    return await handleResponse<InstagramUser>(response);
+  } catch {
+    // If Instagram API fails, try getting Instagram account via Facebook Pages
+    const fbUrl = new URL(`${facebookGraphBase()}/me/accounts`);
+    fbUrl.searchParams.set("fields", "id,name,instagram_business_account{id,username,name,profile_picture_url,followers_count}");
+    fbUrl.searchParams.set("access_token", accessToken);
+    
+    const fbResponse = await fetch(fbUrl.toString());
+    const fbData = await handleResponse<{ data: Array<{ instagram_business_account?: InstagramUser }> }>(fbResponse);
+    
+    const igAccount = fbData.data?.find(p => p.instagram_business_account)?.instagram_business_account;
+    if (!igAccount) {
+      throw new Error("No Instagram Business account found connected to your Facebook Pages");
+    }
+    
+    return {
+      ...igAccount,
+      user_id: igAccount.id,
+    };
+  }
 }
 
 const MEDIA_FIELDS =
@@ -750,10 +771,12 @@ export async function getFollowerCountSeries(
 export async function getLongLivedToken(
   shortLivedToken: string
 ): Promise<{ accessToken: string; expiresIn: number }> {
-  const url = new URL(`${instagramGraphBase()}/access_token`);
-  url.searchParams.set("grant_type", "ig_exchange_token");
+  // For Facebook Login for Business, exchange for a long-lived Facebook token
+  const url = new URL(`${facebookGraphBase()}/oauth/access_token`);
+  url.searchParams.set("grant_type", "fb_exchange_token");
+  url.searchParams.set("client_id", requireEnv("INSTAGRAM_APP_ID"));
   url.searchParams.set("client_secret", requireEnv("INSTAGRAM_APP_SECRET"));
-  url.searchParams.set("access_token", shortLivedToken);
+  url.searchParams.set("fb_exchange_token", shortLivedToken);
 
   const response = await fetch(url.toString());
   const data = await handleResponse<TokenResponse>(response);
